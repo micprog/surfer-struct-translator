@@ -1,0 +1,16 @@
+# Copy this file to .cargo/config.toml and adjust WASI_SDK_PATH below.
+#
+# Install wasi-sdk from: https://github.com/WebAssembly/wasi-sdk/releases
+# Then replace /path/to/wasi-sdk with your installation path.
+
+[build]
+target = "wasm32-wasip1"
+
+[target.wasm32-wasip1]
+linker = "/path/to/wasi-sdk/bin/wasm-ld"
+
+[env]
+CC_wasm32_wasip1 = "/path/to/wasi-sdk/bin/clang"
+CXX_wasm32_wasip1 = "/path/to/wasi-sdk/bin/clang++"
+AR_wasm32_wasip1 = "/path/to/wasi-sdk/bin/llvm-ar"
+WASI_SDK_PATH = "/path/to/wasi-sdk"

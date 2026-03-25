@@ -6,16 +6,23 @@ Verilator (and other simulators) flatten packed structs into wide bit vectors wh
 
 ## Building
 
-The plugin compiles to WebAssembly (wasm32-wasip1) and requires [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) for the C++ slang library.
+The plugin compiles to WebAssembly (wasm32-wasip1) and requires [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) for the C++ [slang](https://github.com/MikePopoloski/slang) library.
 
 ### Prerequisites
 
 - Rust toolchain with the `wasm32-wasip1` target: `rustup target add wasm32-wasip1`
 - [wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases) (tested with v32)
 
-### Configuration
+### Setup
 
-Update `.cargo/config.toml` to point to your wasi-sdk installation. The default paths assume `~/tools/wasi-sdk-32.0-arm64-macos/`.
+Copy the Cargo config example and fill in your wasi-sdk installation path:
+
+```sh
+cp .cargo/config.toml.example .cargo/config.toml
+# Edit .cargo/config.toml — replace /path/to/wasi-sdk with your actual path
+```
+
+The config sets the wasm32-wasip1 default build target and points the C/C++ toolchain at your wasi-sdk installation.
 
 ### Build the WASM plugin
 
