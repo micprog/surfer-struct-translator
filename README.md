@@ -127,4 +127,4 @@ Fields are listed MSB-first (Verilator packing order). Each field can be a plain
 
 ## License
 
-EUPL-1.2
+Apache-2.0 — see [LICENSE](LICENSE) for details.
