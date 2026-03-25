@@ -741,6 +741,7 @@ dependencies = [
 [[package]]
 name = "surfer-translation-types"
 version = "0.7.0-dev"
+source = "git+https://gitlab.com/surfer-project/surfer.git#3d378a2a15d94b8a014d427f149601f6899e35f3"
 dependencies = [
  "derive_more",
  "ecolor",
