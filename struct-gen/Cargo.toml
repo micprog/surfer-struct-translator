@@ -1,0 +1,23 @@
+[package]
+name = "surfer-struct-gen"
+version = "0.1.0"
+edition = "2024"
+description = "Generate struct_defs.toml for surfer-struct-translator by elaborating SystemVerilog with slang"
+
+[lib]
+name = "surfer_struct_gen"
+path = "src/lib.rs"
+
+[[bin]]
+name = "surfer-struct-gen"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+cxx = "1.0.194"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[build-dependencies]
+cmake = "0.1.57"
+cxx-build = "1.0.194"
