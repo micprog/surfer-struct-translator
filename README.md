@@ -42,14 +42,23 @@ cargo build -p surfer-struct-gen --release --target <your-host-triple>
 
 ## Installation
 
-Copy the `.wasm` file into the `.surfer/translators/` directory next to your waveform file (or into Surfer's global config directory):
+Surfer searches for translator plugins in two locations:
+
+1. **`.surfer/translators/`** — relative to the working directory (project-local)
+2. **User data directory** — shared across all projects:
+   - macOS: `~/Library/Application Support/org.surfer-project.surfer/translators/`
+   - Linux: `~/.local/share/surfer/translators/`
+
+For a project-local install, copy the plugin next to your waveform file:
 
 ```sh
 mkdir -p .surfer/translators
 cp target/wasm32-wasip1/release/surfer_struct_translator.wasm .surfer/translators/
 ```
 
-Then create a configuration file in the same directory (see below).
+To share the plugin across all projects, install it in the user data directory instead.
+
+Then create a configuration file in the same directory as the plugin (see below).
 
 ## Configuration
 
