@@ -256,20 +256,27 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
             field.kind = field_kind(variable.getType());
             field.type_name = std::string(field_type_name(variable.getType()));
             field.array_size = arrSize;
-            info.fields.push_back(std::move(field));
-
             // Recursively extract nested struct types.
             if (fieldElem->kind == SymbolKind::PackedStructType) {
                 auto nested_name = std::string(field_type_name(variable.getType()));
                 if (nested_name.empty()) {
-                    auto it = canonical_to_alias.find(fieldElem);
-                    if (it != canonical_to_alias.end())
-                        nested_name = it->second;
+                    auto it2 = canonical_to_alias.find(fieldElem);
+                    if (it2 != canonical_to_alias.end()) {
+                        nested_name = it2->second;
+                    } else {
+                        // Anonymous nested struct — synthesize name from
+                        // parent struct name + field name.
+                        nested_name = "__anon_" + name + "_" + std::string(variable.name);
+                        canonical_to_alias.emplace(fieldElem, nested_name);
+                    }
                 }
-                if (!nested_name.empty()) {
-                    extract_struct_from_elaborated(*fieldElem, nested_name);
-                }
+                // Update the field's type_name so the translator can
+                // reference the (possibly synthesized) struct definition.
+                field.type_name = nested_name;
+                extract_struct_from_elaborated(*fieldElem, nested_name);
             }
+
+            info.fields.push_back(std::move(field));
         }
 
         canonical_to_alias.emplace(&canonical, name);
@@ -315,8 +322,14 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
             tname = it->second;
         } else {
             tname = std::string(field_type_name(type));
-            if (tname.empty())
-                return;
+            if (tname.empty()) {
+                // Anonymous packed struct (inline `struct packed { ... } sig;`)
+                // — synthesize a name from the signal name so it can still be
+                // decomposed.  Register in canonical_to_alias so that other
+                // variables sharing the same anonymous type reuse this name.
+                tname = "__anon_" + std::string(sym.name);
+                canonical_to_alias.emplace(elem, tname);
+            }
         }
 
         // Extract the struct definition from this elaborated signal's type.
