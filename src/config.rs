@@ -25,7 +25,12 @@ pub struct FieldDef {
     pub struct_type: Option<String>,
     /// Reference to an enum type (mutually exclusive with width/struct_type).
     pub enum_type: Option<String>,
+    /// Number of elements for packed array fields (default 1).
+    #[serde(default = "default_one")]
+    pub array_size: u32,
 }
+
+fn default_one() -> u32 { 1 }
 
 #[derive(Deserialize, Clone)]
 pub struct EnumDef {
@@ -43,6 +48,9 @@ pub struct Mapping {
     pub struct_type: String,
     /// Optional: only match if the signal's bit width equals this value.
     pub num_bits: Option<u32>,
+    /// Number of array elements (default 1 = not an array).
+    #[serde(default = "default_one")]
+    pub array_size: u32,
 }
 
 impl Config {
@@ -51,8 +59,9 @@ impl Config {
     }
 
     /// Resolve the bit width of a field, recursing into struct/enum references.
+    /// For array fields, returns element_width * array_size.
     pub fn field_width(&self, field: &FieldDef) -> u32 {
-        if let Some(w) = field.width {
+        let elem_width = if let Some(w) = field.width {
             w
         } else if let Some(ref st) = field.struct_type {
             self.struct_total_width(st)
@@ -60,7 +69,8 @@ impl Config {
             self.enums.get(et).map_or(0, |e| e.width)
         } else {
             0
-        }
+        };
+        elem_width * field.array_size
     }
 
     /// Compute the total bit width of a struct type.
@@ -71,8 +81,8 @@ impl Config {
             .unwrap_or(0)
     }
 
-    /// Find the struct type that matches a given signal path and bit width.
-    pub fn find_mapping(&self, full_path: &str, num_bits: Option<u32>) -> Option<&str> {
+    /// Find the struct type and array size that matches a given signal path and bit width.
+    pub fn find_mapping(&self, full_path: &str, num_bits: Option<u32>) -> Option<(&str, u32)> {
         self.mappings.iter().find_map(|m| {
             if let Some(required) = m.num_bits {
                 if num_bits != Some(required) {
@@ -80,7 +90,7 @@ impl Config {
                 }
             }
             if glob_match(&m.pattern, full_path) {
-                Some(m.struct_type.as_str())
+                Some((m.struct_type.as_str(), m.array_size))
             } else {
                 None
             }
@@ -181,7 +191,7 @@ num_bits = 7
         assert_eq!(config.struct_total_width("req_t"), 7); // 6 + 1
         assert_eq!(
             config.find_mapping("TOP.dut.axi_req_o", Some(7)),
-            Some("req_t")
+            Some(("req_t", 1))
         );
         assert_eq!(config.find_mapping("TOP.dut.axi_req_o", Some(8)), None);
     }
@@ -191,10 +201,11 @@ num_bits = 7
         let toml = include_str!("../struct_defs.toml");
         let config = Config::from_toml(toml).unwrap();
         assert_eq!(config.struct_total_width("aw_chan_t"), 105);
-        assert_eq!(config.struct_total_width("w_chan_t"), 146);
-        assert_eq!(config.struct_total_width("b_chan_t"), 8);
+        assert_eq!(config.struct_total_width("w_chan_t_146"), 146);
+        assert_eq!(config.struct_total_width("w_chan_t_74"), 74);
+        assert_eq!(config.struct_total_width("b_chan_t_8"), 8);
         assert_eq!(config.struct_total_width("ar_chan_t"), 99);
-        assert_eq!(config.struct_total_width("r_chan_t"), 137);
+        assert_eq!(config.struct_total_width("r_chan_t_137"), 137);
         assert_eq!(config.struct_total_width("axi_req_t"), 355);
         assert_eq!(config.struct_total_width("axi_resp_t"), 150);
     }

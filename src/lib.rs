@@ -85,7 +85,9 @@ pub fn variable_info(variable: VariableMeta<(), ()>) -> FnResult<VariableInfo> {
     let info = with_config(|config| {
         config
             .find_mapping(&full_path, variable.num_bits)
-            .map(|struct_name| decompose::build_variable_info(struct_name, config))
+            .map(|(struct_name, array_size)| {
+                decompose::build_variable_info(struct_name, array_size, config)
+            })
             .unwrap_or(VariableInfo::Bits)
     })
     .unwrap_or(VariableInfo::Bits);
@@ -99,7 +101,9 @@ pub fn translate(
     let full_path = signal_full_path(&variable);
 
     let result = with_config(|config| {
-        let Some(struct_name) = config.find_mapping(&full_path, variable.num_bits) else {
+        let Some((struct_name, array_size)) =
+            config.find_mapping(&full_path, variable.num_bits)
+        else {
             return TranslationResult {
                 val: ValueRepr::String("no mapping".to_string()),
                 subfields: vec![],
@@ -117,7 +121,7 @@ pub fn translate(
             VariableValue::String(v) => v.clone(),
         };
 
-        decompose::decompose(&binary_digits, struct_name, config)
+        decompose::decompose(&binary_digits, struct_name, array_size, config)
     });
 
     Ok(result.unwrap_or_else(|| TranslationResult {

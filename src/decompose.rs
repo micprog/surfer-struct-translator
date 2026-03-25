@@ -3,12 +3,21 @@ use surfer_translation_types::{
     SubFieldTranslationResult, TranslationResult, ValueKind, ValueRepr, VariableInfo,
 };
 
-/// Build the hierarchical `VariableInfo` tree for a struct type.
-pub fn build_variable_info(struct_name: &str, config: &Config) -> VariableInfo {
+/// Build the hierarchical `VariableInfo` tree for a struct type, with optional array wrapping.
+pub fn build_variable_info(struct_name: &str, array_size: u32, config: &Config) -> VariableInfo {
     let Some(struct_def) = config.structs.get(struct_name) else {
         return VariableInfo::Bits;
     };
-    build_variable_info_for_struct(struct_def, config)
+    let elem_info = build_variable_info_for_struct(struct_def, config);
+    if array_size > 1 {
+        VariableInfo::Compound {
+            subfields: (0..array_size)
+                .map(|i| (format!("[{i}]"), elem_info.clone()))
+                .collect(),
+        }
+    } else {
+        elem_info
+    }
 }
 
 fn build_variable_info_for_struct(struct_def: &StructDef, config: &Config) -> VariableInfo {
@@ -17,16 +26,23 @@ fn build_variable_info_for_struct(struct_def: &StructDef, config: &Config) -> Va
             .fields
             .iter()
             .map(|f| {
-                let info = if let Some(ref st) = f.struct_type {
+                let elem_info = if let Some(ref st) = f.struct_type {
                     config
                         .structs
                         .get(st)
                         .map(|s| build_variable_info_for_struct(s, config))
                         .unwrap_or(VariableInfo::Bits)
                 } else {
-                    // Leaf fields (plain bits or enums) are represented as Bits
-                    // so surfer can apply sub-translators to them.
                     VariableInfo::Bits
+                };
+                let info = if f.array_size > 1 {
+                    VariableInfo::Compound {
+                        subfields: (0..f.array_size)
+                            .map(|i| (format!("[{i}]"), elem_info.clone()))
+                            .collect(),
+                    }
+                } else {
+                    elem_info
                 };
                 (f.name.clone(), info)
             })
@@ -35,7 +51,13 @@ fn build_variable_info_for_struct(struct_def: &StructDef, config: &Config) -> Va
 }
 
 /// Decompose a binary string into a structured `TranslationResult` according to a struct definition.
-pub fn decompose(binary_digits: &str, struct_name: &str, config: &Config) -> TranslationResult {
+/// When `array_size > 1`, the bits are split into equal-sized elements and each is decomposed.
+pub fn decompose(
+    binary_digits: &str,
+    struct_name: &str,
+    array_size: u32,
+    config: &Config,
+) -> TranslationResult {
     let Some(struct_def) = config.structs.get(struct_name) else {
         return TranslationResult {
             val: ValueRepr::String(format!("unknown struct: {struct_name}")),
@@ -43,7 +65,27 @@ pub fn decompose(binary_digits: &str, struct_name: &str, config: &Config) -> Tra
             kind: ValueKind::Warn,
         };
     };
-    decompose_struct(binary_digits, struct_def, config)
+
+    if array_size > 1 {
+        let elem_width = config.struct_total_width(struct_name) as usize;
+        let subfields = (0..array_size)
+            .map(|i| {
+                let offset = i as usize * elem_width;
+                let bits = safe_slice(binary_digits, offset, elem_width);
+                SubFieldTranslationResult {
+                    name: format!("[{i}]"),
+                    result: decompose_struct(bits, struct_def, config),
+                }
+            })
+            .collect();
+        TranslationResult {
+            val: ValueRepr::Struct,
+            subfields,
+            kind: ValueKind::Normal,
+        }
+    } else {
+        decompose_struct(binary_digits, struct_def, config)
+    }
 }
 
 fn decompose_struct(
@@ -75,8 +117,26 @@ fn decompose_struct(
 
 fn decompose_field(bits: &str, field: &FieldDef, config: &Config) -> TranslationResult {
     if let Some(ref st) = field.struct_type {
-        // Nested struct: recurse
+        // Nested struct (possibly arrayed): recurse
         if let Some(s) = config.structs.get(st) {
+            if field.array_size > 1 {
+                let elem_width = config.struct_total_width(st) as usize;
+                let subfields = (0..field.array_size)
+                    .map(|i| {
+                        let offset = i as usize * elem_width;
+                        let elem_bits = safe_slice(bits, offset, elem_width);
+                        SubFieldTranslationResult {
+                            name: format!("[{i}]"),
+                            result: decompose_struct(elem_bits, s, config),
+                        }
+                    })
+                    .collect();
+                return TranslationResult {
+                    val: ValueRepr::Struct,
+                    subfields,
+                    kind: ValueKind::Normal,
+                };
+            }
             return decompose_struct(bits, s, config);
         }
     }
@@ -156,7 +216,7 @@ width = 1
     #[test]
     fn test_decompose_leaf() {
         let config = test_config();
-        let result = decompose("11001101011", "outer_t", &config);
+        let result = decompose("11001101011", "outer_t", 1, &config);
         assert!(matches!(result.val, ValueRepr::Struct));
         assert_eq!(result.subfields.len(), 2);
         assert_eq!(result.subfields[0].name, "chan");
@@ -184,7 +244,7 @@ width = 1
     fn test_decompose_unknown_enum_value() {
         let config = test_config();
         // burst = "11" which is not in the enum map
-        let result = decompose("0000000011", "inner_t", &config);
+        let result = decompose("0000000011", "inner_t", 1, &config);
         let burst = &result.subfields[1].result;
         assert!(matches!(&burst.val, ValueRepr::String(s) if s == "?(11)"));
         assert!(matches!(burst.kind, ValueKind::Warn));
@@ -193,7 +253,7 @@ width = 1
     #[test]
     fn test_variable_info() {
         let config = test_config();
-        let info = build_variable_info("outer_t", &config);
+        let info = build_variable_info("outer_t", 1, &config);
         match info {
             VariableInfo::Compound { ref subfields } => {
                 assert_eq!(subfields.len(), 2);
