@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 [dependencies]
 extism-pdk = "1.4.1"
 surfer-translation-types = { path = "../surfer/surfer-translation-types", features = ["wasm_plugins"] }
+surfer-struct-gen = { path = "../surfer-struct-gen" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

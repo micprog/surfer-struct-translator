@@ -1,5 +1,7 @@
 mod config;
 mod decompose;
+mod generate;
+mod meta_config;
 
 use std::sync::Mutex;
 
@@ -12,6 +14,7 @@ use surfer_translation_types::{
 pub use surfer_translation_types::plugin_types::TranslateParams;
 
 use config::Config;
+use meta_config::MetaConfig;
 
 #[host_fn]
 extern "ExtismHost" {
@@ -22,20 +25,79 @@ extern "ExtismHost" {
 
 static CONFIG: Mutex<Option<Config>> = Mutex::new(None);
 
-fn load_config() -> Option<Config> {
+fn read_file_text(path: &str) -> Option<String> {
+    let bytes = unsafe { read_file(path.to_string()) }.ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+fn file_exists_check(path: &str) -> bool {
+    unsafe { file_exists(path.to_string()) }.unwrap_or(false)
+}
+
+fn get_config_dir() -> Option<String> {
     let raw = unsafe { translators_config_dir() }.ok()?;
     let config_dir: Option<String> = serde_json::from_slice(&raw).ok()?;
-    let config_dir = config_dir?;
-    let path = format!("{}/struct_defs.toml", config_dir);
+    config_dir
+}
 
-    let exists = unsafe { file_exists(path.clone()) }.ok()?;
-    if !exists {
-        return None;
+/// Load plugin configuration with three-tier fallback:
+///
+/// 1. `struct_config.toml` with `struct_defs_file` → load that TOML file
+/// 2. `struct_config.toml` with `[sources]` → parse SV sources with slang
+/// 3. `struct_defs.toml` directly → backward compatible
+fn load_config() -> Option<Config> {
+    let config_dir = get_config_dir()?;
+
+    // Try struct_config.toml first (new format).
+    let meta_path = format!("{config_dir}/struct_config.toml");
+    if file_exists_check(&meta_path) {
+        if let Some(text) = read_file_text(&meta_path) {
+            match toml::from_str::<MetaConfig>(&text) {
+                Ok(meta) => {
+                    // Mode 1: Pre-generated definitions file.
+                    if let Some(ref defs_file) = meta.struct_defs_file {
+                        let defs_path = if std::path::Path::new(defs_file).is_absolute() {
+                            defs_file.clone()
+                        } else {
+                            format!("{config_dir}/{defs_file}")
+                        };
+                        if let Some(defs_text) = read_file_text(&defs_path) {
+                            return Config::from_toml(&defs_text).ok();
+                        }
+                    }
+
+                    // Mode 2: Parse SystemVerilog sources on the fly.
+                    if let Some(ref sources) = meta.sources {
+                        match generate::generate_from_sources(sources, &config_dir) {
+                            Ok(config) => return Some(config),
+                            Err(e) => {
+                                // Log error but don't crash — fall through to fallback.
+                                extism_pdk::log!(
+                                    extism_pdk::LogLevel::Error,
+                                    "Failed to generate struct defs from sources: {e}"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    extism_pdk::log!(
+                        extism_pdk::LogLevel::Error,
+                        "Failed to parse struct_config.toml: {e}"
+                    );
+                }
+            }
+        }
     }
 
-    let bytes = unsafe { read_file(path) }.ok()?;
-    let text = String::from_utf8(bytes).ok()?;
-    Config::from_toml(&text).ok()
+    // Mode 3: Fallback to struct_defs.toml (backward compatible).
+    let path = format!("{config_dir}/struct_defs.toml");
+    if file_exists_check(&path) {
+        let text = read_file_text(&path)?;
+        return Config::from_toml(&text).ok();
+    }
+
+    None
 }
 
 fn with_config<T>(f: impl FnOnce(&Config) -> T) -> Option<T> {
