@@ -32,11 +32,13 @@ mod ffi {
 
         /// Compiles all syntax trees in the session, visits the elaborated AST,
         /// and returns a JSON string describing all packed struct and enum type aliases.
+        /// `root_prefix` is the waveform root scope name (e.g. "TOP"); empty uses "TOP".
         fn reflect_types(
             session: &SlangSession,
             public_only: bool,
             top_modules: &Vec<String>,
             param_overrides: &Vec<String>,
+            root_prefix: &String,
         ) -> SlangResult;
     }
 }
@@ -44,6 +46,12 @@ mod ffi {
 /// Public owner for all parsed trees and parse contexts.
 pub struct SlangSession {
     inner: UniquePtr<ffi::SlangSession>,
+}
+
+impl Default for SlangSession {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SlangSession {
@@ -84,15 +92,24 @@ impl SlangSession {
     /// Compiles all parsed syntax trees and extracts packed struct and enum type definitions.
     ///
     /// Returns a JSON string with the extracted type information.
+    /// `root_prefix` is the waveform root scope name (e.g. "TOP"); empty uses "TOP".
     pub fn reflect_types(
         &self,
         public_only: bool,
         top_modules: &[String],
         param_overrides: &[String],
+        root_prefix: &str,
     ) -> Result<String, String> {
         let tops = top_modules.to_vec();
         let params = param_overrides.to_vec();
-        let result = ffi::reflect_types(self.inner.as_ref().unwrap(), public_only, &tops, &params);
+        let rp = root_prefix.to_string();
+        let result = ffi::reflect_types(
+            self.inner.as_ref().unwrap(),
+            public_only,
+            &tops,
+            &params,
+            &rp,
+        );
 
         if result.error.is_empty() {
             Ok(result.value)

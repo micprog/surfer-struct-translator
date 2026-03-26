@@ -60,6 +60,6 @@ std::size_t tree_count(const SlangSession& session);
 /// and returns a JSON string describing all packed struct and enum type aliases.
 /// If public_only is true, only types annotated with /* public */ are included.
 /// If top_modules is non-empty, those modules are set as the design's top level.
-SlangResult reflect_types(const SlangSession& session, bool public_only, const rust::Vec<rust::String>& top_modules, const rust::Vec<rust::String>& param_overrides);
+SlangResult reflect_types(const SlangSession& session, bool public_only, const rust::Vec<rust::String>& top_modules, const rust::Vec<rust::String>& param_overrides, const rust::String& root_prefix);
 
 #endif // SLANG_BRIDGE_H

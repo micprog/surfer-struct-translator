@@ -32,6 +32,8 @@ pub struct GenerateOpts<'a> {
     pub auto_map: bool,
     /// Manual signal-to-type mappings ("pattern=struct_type").
     pub manual_mappings: &'a [String],
+    /// Root scope prefix for signal paths (e.g. "TOP"). Empty uses "TOP".
+    pub root_prefix: &'a str,
 }
 
 /// Collect all source files, includes, and defines from file lists and direct arguments.
@@ -79,8 +81,12 @@ pub fn generate_struct_defs(opts: &GenerateOpts) -> Result<String, String> {
     session.parse_group(opts.files, opts.includes, opts.defines)?;
 
     // Reflect types.
-    let reflected_json =
-        session.reflect_types(opts.public_only, opts.top_modules, opts.param_overrides)?;
+    let reflected_json = session.reflect_types(
+        opts.public_only,
+        opts.top_modules,
+        opts.param_overrides,
+        opts.root_prefix,
+    )?;
 
     let data: ReflectedData = serde_json::from_str(&reflected_json)
         .map_err(|e| format!("Error parsing reflected JSON: {e}"))?;

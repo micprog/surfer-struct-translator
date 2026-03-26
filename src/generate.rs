@@ -8,12 +8,28 @@ use std::path::Path;
 use crate::config::Config;
 use crate::meta_config::SourcesConfig;
 
+/// Optional hierarchy info from the waveform file, used to infer
+/// root prefix and top module when not explicitly configured.
+pub struct HierarchyHints {
+    /// Root scope prefix (e.g. "TOP").
+    pub root_prefix: String,
+    /// Component (module) names for root scopes, used as fallback top modules.
+    pub top_modules: Vec<String>,
+}
+
 /// Generate a Config by parsing SystemVerilog sources using slang.
 ///
 /// `config_dir` is the directory containing struct_config.toml, used to
 /// resolve relative paths in the source configuration.
+///
+/// `hints` provides optional hierarchy info from the waveform file for
+/// inferring root prefix and top module names.
 #[cfg(target_os = "wasi")]
-pub fn generate_from_sources(sources: &SourcesConfig, config_dir: &str) -> Result<Config, String> {
+pub fn generate_from_sources(
+    sources: &SourcesConfig,
+    config_dir: &str,
+    hints: Option<&HierarchyHints>,
+) -> Result<Config, String> {
     // Resolve flist paths relative to config_dir.
     let flist_paths: Vec<String> = sources
         .flist
@@ -48,16 +64,27 @@ pub fn generate_from_sources(sources: &SourcesConfig, config_dir: &str) -> Resul
         return Err("No source files found in configuration".to_string());
     }
 
+    // Use configured top_modules, or fall back to hierarchy hints.
+    let top_modules = if sources.top_modules.is_empty() {
+        hints.map(|h| h.top_modules.clone()).unwrap_or_default()
+    } else {
+        sources.top_modules.clone()
+    };
+
+    // Use root prefix from hierarchy hints, or default to "TOP".
+    let root_prefix = hints.map(|h| h.root_prefix.as_str()).unwrap_or("TOP");
+
     // Generate TOML string from sources.
     let opts = surfer_struct_gen::GenerateOpts {
         files: &files,
         includes: &includes,
         defines: &defines,
-        top_modules: &sources.top_modules,
+        top_modules: &top_modules,
         param_overrides: &sources.param_overrides,
         public_only: sources.public_only,
         auto_map: sources.auto_map,
         manual_mappings: &sources.mappings,
+        root_prefix,
     };
 
     let toml_string = surfer_struct_gen::generate_struct_defs(&opts)?;
