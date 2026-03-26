@@ -123,7 +123,7 @@ static std::string field_kind(const Type& type) {
     return "scalar";
 }
 
-SlangResult reflect_types(const SlangSession& session, bool public_only, const rust::Vec<rust::String>& top_modules, const rust::Vec<rust::String>& param_overrides) {
+SlangResult reflect_types(const SlangSession& session, bool public_only, const rust::Vec<rust::String>& top_modules, const rust::Vec<rust::String>& param_overrides, const rust::String& root_prefix) {
     // Create a compilation from all parsed syntax trees.
     CompilationOptions options;
     // Tolerate unknown modules so partial designs can still be reflected.
@@ -296,13 +296,17 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
     std::vector<SignalTypeMapping> signal_mappings;
     std::set<std::string> seen_paths;
 
-    // Replace the leading "$root." that slang prepends with "TOP." to match
-    // Verilator's waveform hierarchy convention.
-    auto strip_root = [](const std::string& path) -> std::string {
-        constexpr std::string_view prefix = "$root.";
-        if (path.substr(0, prefix.size()) == prefix)
-            return "TOP." + path.substr(prefix.size());
-        return "TOP." + path;
+    // Replace the leading "$root." that slang prepends with the actual root
+    // scope prefix from the waveform file (e.g. "TOP.").  Falls back to "TOP."
+    // when no prefix is provided.
+    std::string rprefix = root_prefix.empty()
+        ? std::string("TOP.")
+        : std::string(root_prefix.data(), root_prefix.size()) + ".";
+    auto strip_root = [&rprefix](const std::string& path) -> std::string {
+        constexpr std::string_view slang_prefix = "$root.";
+        if (path.substr(0, slang_prefix.size()) == slang_prefix)
+            return rprefix + path.substr(slang_prefix.size());
+        return rprefix + path;
     };
 
     auto collect_signal = [&](const Symbol& sym, const Type& type) {

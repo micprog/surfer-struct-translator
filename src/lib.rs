@@ -6,14 +6,24 @@ mod meta_config;
 use std::sync::Mutex;
 
 use extism_pdk::{FnResult, host_fn, plugin_fn};
+use serde::Deserialize;
 use surfer_translation_types::{
     TranslationPreference, TranslationResult, ValueKind, ValueRepr, VariableInfo, VariableMeta,
     VariableValue,
 };
 
+/// Hierarchy information from the loaded waveform file.
+/// Matches the `WaveHierarchyInfo` struct in surfer-translation-types.
+#[derive(Deserialize)]
+struct WaveHierarchyInfo {
+    root_scopes: Vec<String>,
+    root_components: Vec<(String, String)>,
+}
+
 pub use surfer_translation_types::plugin_types::TranslateParams;
 
 use config::Config;
+use generate::HierarchyHints;
 use meta_config::MetaConfig;
 
 #[host_fn]
@@ -24,6 +34,14 @@ extern "ExtismHost" {
 }
 
 static CONFIG: Mutex<Option<Config>> = Mutex::new(None);
+
+/// Stored meta-config and config dir for regeneration when hierarchy info arrives.
+static META_STATE: Mutex<Option<MetaState>> = Mutex::new(None);
+
+struct MetaState {
+    meta: MetaConfig,
+    config_dir: String,
+}
 
 fn read_file_text(path: &str) -> Option<String> {
     let bytes = unsafe { read_file(path.to_string()) }.ok()?;
@@ -45,7 +63,7 @@ fn get_config_dir() -> Option<String> {
 /// 1. `struct_config.toml` with `struct_defs_file` → load that TOML file
 /// 2. `struct_config.toml` with `[sources]` → parse SV sources with slang
 /// 3. `struct_defs.toml` directly → backward compatible
-fn load_config() -> Option<Config> {
+fn load_config(hints: Option<&HierarchyHints>) -> Option<Config> {
     let config_dir = get_config_dir()?;
 
     // Try struct_config.toml first (new format).
@@ -68,17 +86,22 @@ fn load_config() -> Option<Config> {
                 }
 
                 // Mode 2: Parse SystemVerilog sources on the fly.
-                if let Some(ref sources) = meta.sources {
-                    match generate::generate_from_sources(sources, &config_dir) {
+                if let Some(sources) = meta.sources.as_ref() {
+                    let result = generate::generate_from_sources(sources, &config_dir, hints);
+                    // Store meta state for potential regeneration.
+                    if let Ok(mut guard) = META_STATE.lock() {
+                        *guard = Some(MetaState { meta, config_dir });
+                    }
+                    match result {
                         Ok(config) => return Some(config),
                         Err(e) => {
-                            // Log error but don't crash — fall through to fallback.
                             extism_pdk::log!(
                                 extism_pdk::LogLevel::Error,
                                 "Failed to generate struct defs from sources: {e}"
                             );
                         }
                     }
+                    return None;
                 }
             }
             Err(e) => {
@@ -116,7 +139,7 @@ fn signal_full_path(variable: &VariableMeta<(), ()>) -> String {
 
 #[plugin_fn]
 pub fn new() -> FnResult<()> {
-    let config = load_config();
+    let config = load_config(None);
     if let Ok(mut guard) = CONFIG.lock() {
         *guard = config;
     }
@@ -126,6 +149,47 @@ pub fn new() -> FnResult<()> {
 #[plugin_fn]
 pub fn name() -> FnResult<String> {
     Ok("Struct Decomposer".to_string())
+}
+
+#[plugin_fn]
+pub fn set_wave_hierarchy_info(
+    extism_pdk::Json(info): extism_pdk::Json<WaveHierarchyInfo>,
+) -> FnResult<()> {
+    // Build hints from the hierarchy info.
+    let hints = HierarchyHints {
+        root_prefix: info.root_scopes.first().cloned().unwrap_or_default(),
+        top_modules: info
+            .root_components
+            .iter()
+            .map(|(_name, component)| component.clone())
+            .collect(),
+    };
+
+    // Check if we have a stored sources config to regenerate with.
+    let should_regenerate = META_STATE
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().map(|state| state.meta.sources.is_some()))
+        .unwrap_or(false);
+
+    if should_regenerate {
+        // Regenerate config with hierarchy hints.
+        let result = META_STATE.lock().ok().and_then(|guard| {
+            guard.as_ref().and_then(|state| {
+                state.meta.sources.as_ref().map(|sources| {
+                    generate::generate_from_sources(sources, &state.config_dir, Some(&hints))
+                })
+            })
+        });
+
+        if let Some(Ok(config)) = result
+            && let Ok(mut guard) = CONFIG.lock()
+        {
+            *guard = Some(config);
+        }
+    }
+
+    Ok(())
 }
 
 #[plugin_fn]

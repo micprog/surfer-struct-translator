@@ -24,10 +24,10 @@ fn resolve_struct_ref(
         return Some(FieldRef::Struct(keys[0].to_string()));
     }
     for key in keys {
-        if let Some(s) = by_key.get(key) {
-            if s.total_width == field_width {
-                return Some(FieldRef::Struct(key.to_string()));
-            }
+        if let Some(s) = by_key.get(key)
+            && s.total_width == field_width
+        {
+            return Some(FieldRef::Struct(key.to_string()));
         }
     }
     None
@@ -45,10 +45,10 @@ fn resolve_enum_ref(
         return Some(FieldRef::Enum(keys[0].to_string()));
     }
     for key in keys {
-        if let Some(e) = by_key.get(key) {
-            if e.inner.width == field_width {
-                return Some(FieldRef::Enum(key.to_string()));
-            }
+        if let Some(e) = by_key.get(key)
+            && e.inner.width == field_width
+        {
+            return Some(FieldRef::Enum(key.to_string()));
         }
     }
     None

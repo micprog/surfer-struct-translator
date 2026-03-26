@@ -53,6 +53,10 @@ struct Cli {
     /// Top-level parameter overrides (e.g. -GNrLanes=4).
     #[arg(short = 'G', value_name = "NAME=VALUE")]
     param_overrides: Vec<String>,
+
+    /// Root scope prefix for signal paths. Defaults to "TOP".
+    #[arg(long, default_value = "TOP")]
+    root_prefix: String,
 }
 
 fn main() {
@@ -83,6 +87,7 @@ fn main() {
         public_only: cli.public_only,
         auto_map: cli.auto_map,
         manual_mappings: &cli.mappings,
+        root_prefix: &cli.root_prefix,
     };
 
     let toml_output = match generate_struct_defs(&opts) {
