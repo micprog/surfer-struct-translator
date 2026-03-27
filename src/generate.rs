@@ -1,5 +1,8 @@
 //! On-the-fly generation of struct definitions from SystemVerilog sources.
+//!
+//! This feature requires the slang C++ library and is only available on WASI targets.
 
+#[cfg(target_os = "wasi")]
 use std::path::Path;
 
 use crate::config::Config;
@@ -9,6 +12,7 @@ use crate::meta_config::SourcesConfig;
 ///
 /// `config_dir` is the directory containing struct_config.toml, used to
 /// resolve relative paths in the source configuration.
+#[cfg(target_os = "wasi")]
 pub fn generate_from_sources(sources: &SourcesConfig, config_dir: &str) -> Result<Config, String> {
     // Resolve flist paths relative to config_dir.
     let flist_paths: Vec<String> = sources
@@ -60,7 +64,16 @@ pub fn generate_from_sources(sources: &SourcesConfig, config_dir: &str) -> Resul
     Config::from_toml(&toml_string).map_err(|e| format!("Failed to parse generated TOML: {e}"))
 }
 
+#[cfg(not(target_os = "wasi"))]
+pub fn generate_from_sources(
+    _sources: &SourcesConfig,
+    _config_dir: &str,
+) -> Result<Config, String> {
+    Err("On-the-fly SystemVerilog parsing is not supported on this platform (requires WASI). Use a pre-generated struct_defs.toml instead.".to_string())
+}
+
 /// Resolve a path relative to a base directory, unless it's already absolute.
+#[cfg(target_os = "wasi")]
 fn resolve_path(path: &str, base_dir: &str) -> String {
     if Path::new(path).is_absolute() {
         path.to_string()
