@@ -62,13 +62,36 @@ pub fn deduplicate_structs(raw: &[ReflectedStruct]) -> Vec<UniqueStruct> {
                 total_width: total,
             });
         } else {
-            for (_, s) in &unique_sigs {
-                let total: u32 = s.fields.iter().map(|f| f.width).sum();
+            // Build width-suffixed entries; if two variants share the same total
+            // width, further disambiguate with a 1-based index (_35, _35_2, _35_3…).
+            let mut width_count: HashMap<u32, u32> = HashMap::new();
+            let entries_with_width: Vec<(u32, &ReflectedStruct)> = unique_sigs
+                .iter()
+                .map(|(_, s)| {
+                    let total: u32 = s.fields.iter().map(|f| f.width).sum();
+                    *width_count.entry(total).or_default() += 1;
+                    (total, *s)
+                })
+                .collect();
+
+            let mut width_seen: HashMap<u32, u32> = HashMap::new();
+            for (total, s) in &entries_with_width {
+                let count = width_count[total];
+                let idx = {
+                    let e = width_seen.entry(*total).or_default();
+                    *e += 1;
+                    *e
+                };
+                let key = if count == 1 || idx == 1 {
+                    format!("{name}_{total}")
+                } else {
+                    format!("{name}_{total}_{idx}")
+                };
                 result.push(UniqueStruct {
-                    key: format!("{name}_{total}"),
+                    key,
                     sv_name: name.to_string(),
                     fields: s.fields.clone(),
-                    total_width: total,
+                    total_width: *total,
                 });
             }
         }
