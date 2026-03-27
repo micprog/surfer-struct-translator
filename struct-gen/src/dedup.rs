@@ -44,7 +44,10 @@ pub fn deduplicate_structs(raw: &[ReflectedStruct]) -> Vec<UniqueStruct> {
         // Deduplicate by signature.
         let mut unique_sigs: Vec<(String, &ReflectedStruct)> = Vec::new();
         for (sig, s) in entries {
-            if !unique_sigs.iter().any(|(existing_sig, _)| existing_sig == sig) {
+            if !unique_sigs
+                .iter()
+                .any(|(existing_sig, _)| existing_sig == sig)
+            {
                 unique_sigs.push((sig.clone(), s));
             }
         }

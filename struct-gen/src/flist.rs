@@ -32,7 +32,12 @@ pub fn parse_flist(path: &Path) -> Result<FlistContents, String> {
         if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
             continue;
         }
-        classify_arg(line, &mut result.files, &mut result.includes, &mut result.defines);
+        classify_arg(
+            line,
+            &mut result.files,
+            &mut result.includes,
+            &mut result.defines,
+        );
     }
 
     Ok(result)

@@ -50,42 +50,42 @@ fn load_config() -> Option<Config> {
 
     // Try struct_config.toml first (new format).
     let meta_path = format!("{config_dir}/struct_config.toml");
-    if file_exists_check(&meta_path) {
-        if let Some(text) = read_file_text(&meta_path) {
-            match toml::from_str::<MetaConfig>(&text) {
-                Ok(meta) => {
-                    // Mode 1: Pre-generated definitions file.
-                    if let Some(ref defs_file) = meta.struct_defs_file {
-                        let defs_path = if std::path::Path::new(defs_file).is_absolute() {
-                            defs_file.clone()
-                        } else {
-                            format!("{config_dir}/{defs_file}")
-                        };
-                        if let Some(defs_text) = read_file_text(&defs_path) {
-                            return Config::from_toml(&defs_text).ok();
-                        }
+    if file_exists_check(&meta_path)
+        && let Some(text) = read_file_text(&meta_path)
+    {
+        match toml::from_str::<MetaConfig>(&text) {
+            Ok(meta) => {
+                // Mode 1: Pre-generated definitions file.
+                if let Some(ref defs_file) = meta.struct_defs_file {
+                    let defs_path = if std::path::Path::new(defs_file).is_absolute() {
+                        defs_file.clone()
+                    } else {
+                        format!("{config_dir}/{defs_file}")
+                    };
+                    if let Some(defs_text) = read_file_text(&defs_path) {
+                        return Config::from_toml(&defs_text).ok();
                     }
+                }
 
-                    // Mode 2: Parse SystemVerilog sources on the fly.
-                    if let Some(ref sources) = meta.sources {
-                        match generate::generate_from_sources(sources, &config_dir) {
-                            Ok(config) => return Some(config),
-                            Err(e) => {
-                                // Log error but don't crash — fall through to fallback.
-                                extism_pdk::log!(
-                                    extism_pdk::LogLevel::Error,
-                                    "Failed to generate struct defs from sources: {e}"
-                                );
-                            }
+                // Mode 2: Parse SystemVerilog sources on the fly.
+                if let Some(ref sources) = meta.sources {
+                    match generate::generate_from_sources(sources, &config_dir) {
+                        Ok(config) => return Some(config),
+                        Err(e) => {
+                            // Log error but don't crash — fall through to fallback.
+                            extism_pdk::log!(
+                                extism_pdk::LogLevel::Error,
+                                "Failed to generate struct defs from sources: {e}"
+                            );
                         }
                     }
                 }
-                Err(e) => {
-                    extism_pdk::log!(
-                        extism_pdk::LogLevel::Error,
-                        "Failed to parse struct_config.toml: {e}"
-                    );
-                }
+            }
+            Err(e) => {
+                extism_pdk::log!(
+                    extism_pdk::LogLevel::Error,
+                    "Failed to parse struct_config.toml: {e}"
+                );
             }
         }
     }
@@ -163,8 +163,7 @@ pub fn translate(
     let full_path = signal_full_path(&variable);
 
     let result = with_config(|config| {
-        let Some((struct_name, array_size)) =
-            config.find_mapping(&full_path, variable.num_bits)
+        let Some((struct_name, array_size)) = config.find_mapping(&full_path, variable.num_bits)
         else {
             return TranslationResult {
                 val: ValueRepr::String("no mapping".to_string()),

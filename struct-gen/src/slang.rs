@@ -92,8 +92,7 @@ impl SlangSession {
     ) -> Result<String, String> {
         let tops = top_modules.to_vec();
         let params = param_overrides.to_vec();
-        let result =
-            ffi::reflect_types(self.inner.as_ref().unwrap(), public_only, &tops, &params);
+        let result = ffi::reflect_types(self.inner.as_ref().unwrap(), public_only, &tops, &params);
 
         if result.error.is_empty() {
             Ok(result.value)

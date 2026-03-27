@@ -21,13 +21,9 @@ fn main() {
 
     // Defines for the C++ bridge build (cxx_build).
     // These must match slang's own compile definitions to avoid ABI mismatches.
-    let mut bridge_defines: Vec<(&str, &str)> = vec![
-        ("SLANG_BOOST_SINGLE_HEADER", "1"),
-    ];
+    let mut bridge_defines: Vec<(&str, &str)> = vec![("SLANG_BOOST_SINGLE_HEADER", "1")];
 
-    let common_cxx_flags: Vec<&str>;
-
-    if is_wasi {
+    let common_cxx_flags: Vec<&str> = if is_wasi {
         // WASI build: no threads, no mimalloc, no exceptions.
         let wasi_sdk = std::env::var("WASI_SDK_PATH")
             .expect("WASI_SDK_PATH must be set for wasm32-wasip1 builds (set in .cargo/config.toml or environment)");
@@ -47,7 +43,7 @@ fn main() {
         bridge_defines.push(("SLANG_USE_MIMALLOC", "0"));
         bridge_defines.push(("SLANG_USE_THREADS", "0"));
 
-        common_cxx_flags = vec!["-std=c++20", "-fno-exceptions"];
+        vec!["-std=c++20", "-fno-exceptions"]
 
         // Note: CC_wasm32_wasip1, CXX_wasm32_wasip1, AR_wasm32_wasip1 must be set
         // in .cargo/config.toml or the environment so that all crate build scripts
@@ -62,12 +58,12 @@ fn main() {
             bridge_defines.push(("SLANG_ASSERT_ENABLED", "1"));
         }
 
-        common_cxx_flags = if target_env == "msvc" {
+        if target_env == "msvc" {
             vec!["/std:c++20", "/EHsc", "/utf-8"]
         } else {
             vec!["-std=c++20"]
-        };
-    }
+        }
+    };
 
     // Apply cmake configuration for Slang library
     slang_lib

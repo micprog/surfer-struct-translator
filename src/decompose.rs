@@ -258,10 +258,7 @@ width = 1
             VariableInfo::Compound { ref subfields } => {
                 assert_eq!(subfields.len(), 2);
                 assert_eq!(subfields[0].0, "chan");
-                assert!(matches!(
-                    subfields[0].1,
-                    VariableInfo::Compound { .. }
-                ));
+                assert!(matches!(subfields[0].1, VariableInfo::Compound { .. }));
                 assert_eq!(subfields[1].0, "valid");
                 assert!(matches!(subfields[1].1, VariableInfo::Bits));
             }

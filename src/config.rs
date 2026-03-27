@@ -30,7 +30,9 @@ pub struct FieldDef {
     pub array_size: u32,
 }
 
-fn default_one() -> u32 { 1 }
+fn default_one() -> u32 {
+    1
+}
 
 #[derive(Deserialize, Clone)]
 pub struct EnumDef {
@@ -84,10 +86,10 @@ impl Config {
     /// Find the struct type and array size that matches a given signal path and bit width.
     pub fn find_mapping(&self, full_path: &str, num_bits: Option<u32>) -> Option<(&str, u32)> {
         self.mappings.iter().find_map(|m| {
-            if let Some(required) = m.num_bits {
-                if num_bits != Some(required) {
-                    return None;
-                }
+            if let Some(required) = m.num_bits
+                && num_bits != Some(required)
+            {
+                return None;
             }
             if glob_match(&m.pattern, full_path) {
                 Some((m.struct_type.as_str(), m.array_size))
@@ -109,20 +111,21 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     let mut pos = 0;
 
     // First part must match the start
-    if let Some(first) = parts.first() {
-        if !first.is_empty() {
-            if !text.starts_with(first) {
-                return false;
-            }
-            pos = first.len();
+    if let Some(first) = parts.first()
+        && !first.is_empty()
+    {
+        if !text.starts_with(first) {
+            return false;
         }
+        pos = first.len();
     }
 
     // Last part must match the end
-    if let Some(last) = parts.last() {
-        if !last.is_empty() && !text[pos..].ends_with(last) {
-            return false;
-        }
+    if let Some(last) = parts.last()
+        && !last.is_empty()
+        && !text[pos..].ends_with(last)
+    {
+        return false;
     }
 
     // Middle parts must appear in order
