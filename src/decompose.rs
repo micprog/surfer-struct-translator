@@ -32,6 +32,8 @@ fn build_variable_info_for_struct(struct_def: &StructDef, config: &Config) -> Va
                         .get(st)
                         .map(|s| build_variable_info_for_struct(s, config))
                         .unwrap_or(VariableInfo::Bits)
+                } else if f.width == Some(1) {
+                    VariableInfo::Bool
                 } else {
                     VariableInfo::Bits
                 };
@@ -260,7 +262,7 @@ width = 1
                 assert_eq!(subfields[0].0, "chan");
                 assert!(matches!(subfields[0].1, VariableInfo::Compound { .. }));
                 assert_eq!(subfields[1].0, "valid");
-                assert!(matches!(subfields[1].1, VariableInfo::Bits));
+                assert!(matches!(subfields[1].1, VariableInfo::Bool));
             }
             _ => panic!("expected Compound"),
         }
