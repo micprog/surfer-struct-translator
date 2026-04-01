@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::dedup::{UniqueEnum, UniqueStruct};
-use crate::types::ReflectedField;
+use crate::types::{ReflectedField, total_elements};
 
 /// Resolved field type reference.
 enum FieldRef {
@@ -62,8 +62,9 @@ fn resolve_field_ref(
     enum_keys_by_sv_name: &HashMap<&str, Vec<&str>>,
     enum_by_key: &HashMap<&str, &UniqueEnum>,
 ) -> Option<FieldRef> {
-    let elem_width = if field.array_size > 1 {
-        field.width / field.array_size
+    let total_elems = total_elements(&field.array_dims);
+    let elem_width = if total_elems > 1 {
+        field.width / total_elems
     } else {
         field.width
     };
@@ -88,7 +89,7 @@ fn resolve_field_ref(
 pub struct MappingEntry {
     pub pattern: String,
     pub struct_type: String,
-    pub array_size: u32,
+    pub array_dims: Vec<u32>,
 }
 
 /// Generate TOML string from deduplicated structs, enums, and mappings.
@@ -170,12 +171,18 @@ pub fn generate_toml(
                         out.push_str(&format!("enum_type = \"{name}\"\n"));
                     }
                     None => {
-                        out.push_str(&format!("width = {}\n", f.width));
+                        // For scalar fields with array dims, output the element
+                        // width (total / product(dims)) so that field_width()
+                        // correctly reconstructs the total.
+                        let w = if f.array_dims.is_empty() {
+                            f.width
+                        } else {
+                            f.width / total_elements(&f.array_dims)
+                        };
+                        out.push_str(&format!("width = {w}\n"));
                     }
                 }
-                if f.array_size > 1 {
-                    out.push_str(&format!("array_size = {}\n", f.array_size));
-                }
+                emit_dims(&mut out, &f.array_dims);
             }
             out.push('\n');
         }
@@ -190,15 +197,29 @@ pub fn generate_toml(
             out.push_str("[[mappings]]\n");
             out.push_str(&format!("pattern = \"{}\"\n", m.pattern));
             out.push_str(&format!("struct_type = \"{}\"\n", m.struct_type));
+            let total_elems = total_elements(&m.array_dims);
             if let Some(s) = struct_by_key.get(m.struct_type.as_str()) {
-                out.push_str(&format!("num_bits = {}\n", s.total_width * m.array_size));
+                out.push_str(&format!("num_bits = {}\n", s.total_width * total_elems));
             }
-            if m.array_size > 1 {
-                out.push_str(&format!("array_size = {}\n", m.array_size));
-            }
+            emit_dims(&mut out, &m.array_dims);
             out.push('\n');
         }
     }
 
     out
+}
+
+/// Emit array dimension info to the TOML output.
+/// Uses `array_size` for 1D arrays (backward compat) and `array_dims` for 2D+.
+fn emit_dims(out: &mut String, dims: &[u32]) {
+    match dims.len() {
+        0 => {}
+        1 => {
+            out.push_str(&format!("array_size = {}\n", dims[0]));
+        }
+        _ => {
+            let vals: Vec<String> = dims.iter().map(|d| d.to_string()).collect();
+            out.push_str(&format!("array_dims = [{}]\n", vals.join(", ")));
+        }
+    }
 }

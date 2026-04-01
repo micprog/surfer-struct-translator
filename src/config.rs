@@ -16,7 +16,7 @@ pub struct StructDef {
     pub fields: Vec<FieldDef>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Clone)]
 pub struct FieldDef {
     pub name: String,
     /// Bit width for leaf fields.
@@ -25,13 +25,43 @@ pub struct FieldDef {
     pub struct_type: Option<String>,
     /// Reference to an enum type (mutually exclusive with width/struct_type).
     pub enum_type: Option<String>,
-    /// Number of elements for packed array fields (default 1).
-    #[serde(default = "default_one")]
-    pub array_size: u32,
+    /// Dimensions for packed array fields (empty = scalar, [N] = 1D, [M,N] = 2D, etc.).
+    pub array_dims: Vec<u32>,
 }
 
-fn default_one() -> u32 {
-    1
+/// Raw deserialization helper that accepts both `array_size` and `array_dims`.
+#[derive(Deserialize)]
+struct FieldDefRaw {
+    name: String,
+    width: Option<u32>,
+    struct_type: Option<String>,
+    enum_type: Option<String>,
+    #[serde(default)]
+    array_size: Option<u32>,
+    #[serde(default)]
+    array_dims: Option<Vec<u32>>,
+}
+
+impl From<FieldDefRaw> for FieldDef {
+    fn from(raw: FieldDefRaw) -> Self {
+        let array_dims = dims_from_raw(raw.array_dims, raw.array_size);
+        FieldDef {
+            name: raw.name,
+            width: raw.width,
+            struct_type: raw.struct_type,
+            enum_type: raw.enum_type,
+            array_dims,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FieldDef {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        FieldDefRaw::deserialize(deserializer).map(Into::into)
+    }
 }
 
 #[derive(Deserialize, Clone)]
@@ -42,7 +72,7 @@ pub struct EnumDef {
     pub values: HashMap<String, String>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Clone)]
 pub struct Mapping {
     /// Glob pattern matched against the full signal path (supports `*`).
     pub pattern: String,
@@ -50,9 +80,58 @@ pub struct Mapping {
     pub struct_type: String,
     /// Optional: only match if the signal's bit width equals this value.
     pub num_bits: Option<u32>,
-    /// Number of array elements (default 1 = not an array).
-    #[serde(default = "default_one")]
-    pub array_size: u32,
+    /// Dimensions for array mappings (empty = not an array).
+    pub array_dims: Vec<u32>,
+}
+
+/// Raw deserialization helper for Mapping.
+#[derive(Deserialize)]
+struct MappingRaw {
+    pattern: String,
+    struct_type: String,
+    num_bits: Option<u32>,
+    #[serde(default)]
+    array_size: Option<u32>,
+    #[serde(default)]
+    array_dims: Option<Vec<u32>>,
+}
+
+impl From<MappingRaw> for Mapping {
+    fn from(raw: MappingRaw) -> Self {
+        let array_dims = dims_from_raw(raw.array_dims, raw.array_size);
+        Mapping {
+            pattern: raw.pattern,
+            struct_type: raw.struct_type,
+            num_bits: raw.num_bits,
+            array_dims,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Mapping {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        MappingRaw::deserialize(deserializer).map(Into::into)
+    }
+}
+
+/// Convert raw `array_dims` / `array_size` fields into a canonical dims vector.
+/// `array_dims` takes precedence. `array_size` of 1 is treated as scalar (empty).
+fn dims_from_raw(array_dims: Option<Vec<u32>>, array_size: Option<u32>) -> Vec<u32> {
+    if let Some(dims) = array_dims {
+        dims
+    } else if let Some(size) = array_size {
+        if size > 1 { vec![size] } else { vec![] }
+    } else {
+        vec![]
+    }
+}
+
+/// Total number of elements across all dimensions (product of dims, 1 for scalar).
+pub fn total_elements(dims: &[u32]) -> u32 {
+    dims.iter().copied().product::<u32>().max(1)
 }
 
 impl Config {
@@ -61,7 +140,7 @@ impl Config {
     }
 
     /// Resolve the bit width of a field, recursing into struct/enum references.
-    /// For array fields, returns element_width * array_size.
+    /// For array fields, returns element_width * total_elements.
     pub fn field_width(&self, field: &FieldDef) -> u32 {
         let elem_width = if let Some(w) = field.width {
             w
@@ -72,7 +151,7 @@ impl Config {
         } else {
             0
         };
-        elem_width * field.array_size
+        elem_width * total_elements(&field.array_dims)
     }
 
     /// Compute the total bit width of a struct type.
@@ -83,8 +162,8 @@ impl Config {
             .unwrap_or(0)
     }
 
-    /// Find the struct type and array size that matches a given signal path and bit width.
-    pub fn find_mapping(&self, full_path: &str, num_bits: Option<u32>) -> Option<(&str, u32)> {
+    /// Find the struct type and array dims that match a given signal path and bit width.
+    pub fn find_mapping(&self, full_path: &str, num_bits: Option<u32>) -> Option<(&str, &[u32])> {
         self.mappings.iter().find_map(|m| {
             if let Some(required) = m.num_bits
                 && num_bits != Some(required)
@@ -92,7 +171,7 @@ impl Config {
                 return None;
             }
             if glob_match(&m.pattern, full_path) {
-                Some((m.struct_type.as_str(), m.array_size))
+                Some((m.struct_type.as_str(), m.array_dims.as_slice()))
             } else {
                 None
             }
@@ -194,9 +273,59 @@ num_bits = 7
         assert_eq!(config.struct_total_width("req_t"), 7); // 6 + 1
         assert_eq!(
             config.find_mapping("TOP.dut.axi_req_o", Some(7)),
-            Some(("req_t", 1))
+            Some(("req_t", [].as_slice()))
         );
         assert_eq!(config.find_mapping("TOP.dut.axi_req_o", Some(8)), None);
+    }
+
+    #[test]
+    fn test_config_parse_array_size_compat() {
+        let toml = r#"
+[structs.inner_t]
+[[structs.inner_t.fields]]
+name = "data"
+width = 8
+
+[structs.outer_t]
+[[structs.outer_t.fields]]
+name = "items"
+struct_type = "inner_t"
+array_size = 4
+
+[[mappings]]
+pattern = "*.sig"
+struct_type = "outer_t"
+array_size = 2
+"#;
+        let config = Config::from_toml(toml).unwrap();
+        assert_eq!(config.structs["outer_t"].fields[0].array_dims, vec![4]);
+        assert_eq!(config.mappings[0].array_dims, vec![2]);
+        assert_eq!(config.struct_total_width("outer_t"), 32); // 8 * 4
+    }
+
+    #[test]
+    fn test_config_parse_array_dims() {
+        let toml = r#"
+[structs.inner_t]
+[[structs.inner_t.fields]]
+name = "data"
+width = 8
+
+[structs.outer_t]
+[[structs.outer_t.fields]]
+name = "matrix"
+struct_type = "inner_t"
+array_dims = [2, 3]
+
+[[mappings]]
+pattern = "*.sig"
+struct_type = "outer_t"
+array_dims = [4, 5]
+"#;
+        let config = Config::from_toml(toml).unwrap();
+        assert_eq!(config.structs["outer_t"].fields[0].array_dims, vec![2, 3]);
+        assert_eq!(config.mappings[0].array_dims, vec![4, 5]);
+        assert_eq!(config.struct_total_width("outer_t"), 48); // 8 * 2 * 3
     }
 
     #[test]

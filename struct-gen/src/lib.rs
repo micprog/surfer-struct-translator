@@ -12,7 +12,7 @@ use std::path::Path;
 use dedup::{UniqueStruct, deduplicate_enums, deduplicate_structs};
 use flist::FlistContents;
 use toml_gen::MappingEntry;
-use types::ReflectedData;
+use types::{ReflectedData, total_elements};
 
 /// Options for generating struct definitions from SystemVerilog sources.
 pub struct GenerateOpts<'a> {
@@ -121,7 +121,7 @@ fn build_mappings(
             all_mappings.push(MappingEntry {
                 pattern: pattern.trim().to_string(),
                 struct_type: struct_type.trim().to_string(),
-                array_size: 1,
+                array_dims: vec![],
             });
         } else {
             eprintln!(
@@ -148,7 +148,7 @@ fn build_mappings(
                     all_mappings.push(MappingEntry {
                         pattern,
                         struct_type: s.key.clone(),
-                        array_size: 1,
+                        array_dims: vec![],
                     });
                 }
             }
@@ -158,8 +158,9 @@ fn build_mappings(
                 let Some(candidates) = type_to_keys.get(sm.type_name.as_str()) else {
                     continue;
                 };
-                let elem_width = if sm.array_size > 1 {
-                    sm.width / sm.array_size
+                let total_elems = total_elements(&sm.array_dims);
+                let elem_width = if total_elems > 1 {
+                    sm.width / total_elems
                 } else {
                     sm.width
                 };
@@ -173,7 +174,7 @@ fn build_mappings(
                 all_mappings.push(MappingEntry {
                     pattern: sm.path.clone(),
                     struct_type: key.clone(),
-                    array_size: sm.array_size,
+                    array_dims: sm.array_dims.clone(),
                 });
             }
         }

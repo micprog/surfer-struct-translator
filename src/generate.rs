@@ -95,6 +95,7 @@ pub fn generate_from_sources(
 pub fn generate_from_sources(
     _sources: &SourcesConfig,
     _config_dir: &str,
+    _hints: Option<&HierarchyHints>,
 ) -> Result<Config, String> {
     Err("On-the-fly SystemVerilog parsing is not supported on this platform (requires WASI). Use a pre-generated struct_defs.toml instead.".to_string())
 }

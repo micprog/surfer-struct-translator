@@ -79,21 +79,37 @@ private:
 };
 
 // Unwrap a type through aliases and packed arrays to find the innermost
-// element type.  Returns the element type and the total array element count
-// (1 when the type is not an array).
-static std::pair<const Type*, size_t> unwrap_to_element(const Type& type) {
+// element type.  Returns the element type and the array dimensions
+// (empty when the type is not an array).
+//
+// Dimensions are reported when:
+// - The innermost element is a struct or enum (array of structs/enums).
+// - There are 2+ nested PackedArrayType layers (multi-dimensional bit vector,
+//   e.g. logic [2:0][3:0]).
+//
+// A single PackedArrayType layer (e.g. logic [7:0]) is treated as a plain
+// bit vector with no dimensions.
+static std::pair<const Type*, std::vector<size_t>> unwrap_to_element(const Type& type) {
     const auto& canonical = type.getCanonicalType();
     if (canonical.kind == SymbolKind::PackedArrayType) {
         const auto& arr = canonical.as<PackedArrayType>();
-        auto [inner, innerCount] = unwrap_to_element(arr.elementType);
-        // Only report array_size > 1 when the element is a struct or enum.
-        // Plain bit vectors (e.g. logic [7:0]) are also PackedArrayType in
-        // slang but should NOT be treated as arrays of scalars.
+        auto [inner, innerDims] = unwrap_to_element(arr.elementType);
+
         if (inner->isStruct() || inner->isEnum()) {
-            return {inner, static_cast<size_t>(arr.range.width()) * innerCount};
+            // Array of structs/enums: collect all dimensions.
+            innerDims.insert(innerDims.begin(), static_cast<size_t>(arr.range.width()));
+            return {inner, innerDims};
+        }
+
+        // For scalars: if the immediate element is itself a packed array,
+        // this is a multi-dimensional bit vector (e.g. logic [M:0][N:0]).
+        // Report the outer dimensions; the innermost layer is the element width.
+        if (arr.elementType.getCanonicalType().kind == SymbolKind::PackedArrayType) {
+            innerDims.insert(innerDims.begin(), static_cast<size_t>(arr.range.width()));
+            return {inner, innerDims};
         }
     }
-    return {&canonical, 1};
+    return {&canonical, {}};
 }
 
 // Get the type alias name for a field, resolving through aliases.
@@ -123,6 +139,18 @@ static std::string field_kind(const Type& type) {
     return "scalar";
 }
 
+// Serialize a dimension vector as a JSON array string, e.g. "[2,3,4]".
+static std::string dims_to_json(const std::vector<size_t>& dims) {
+    std::ostringstream s;
+    s << "[";
+    for (size_t i = 0; i < dims.size(); i++) {
+        if (i > 0) s << ",";
+        s << dims[i];
+    }
+    s << "]";
+    return s.str();
+}
+
 SlangResult reflect_types(const SlangSession& session, bool public_only, const rust::Vec<rust::String>& top_modules, const rust::Vec<rust::String>& param_overrides, const rust::String& root_prefix) {
     // Create a compilation from all parsed syntax trees.
     CompilationOptions options;
@@ -146,10 +174,10 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
     // Collected types.
     struct FieldInfo {
         std::string name;
-        size_t width;           // total bit width (element_width * array_size)
-        std::string kind;       // "scalar", "struct", "enum"
-        std::string type_name;  // name of referenced struct/enum type, empty for scalar
-        size_t array_size;      // >1 for packed arrays of structs/enums
+        size_t width;               // total bit width (element_width * product(dims))
+        std::string kind;           // "scalar", "struct", "enum"
+        std::string type_name;      // name of referenced struct/enum type, empty for scalar
+        std::vector<size_t> dims;   // array dimensions (empty = scalar)
     };
     struct StructInfo {
         std::string name;
@@ -198,13 +226,13 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
 
             for (const auto& member : canonical.as<Scope>().members()) {
                 const auto& variable = member.as<VariableSymbol>();
-                auto [elem, arrSize] = unwrap_to_element(variable.getType());
+                auto [elem, dims] = unwrap_to_element(variable.getType());
                 FieldInfo field;
                 field.name = std::string(variable.name);
                 field.width = variable.getType().getBitstreamWidth();
                 field.kind = field_kind(variable.getType());
                 field.type_name = std::string(field_type_name(variable.getType()));
-                field.array_size = arrSize;
+                field.dims = dims;
                 info.fields.push_back(std::move(field));
             }
 
@@ -249,13 +277,13 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
 
         for (const auto& member : canonical.as<Scope>().members()) {
             const auto& variable = member.as<VariableSymbol>();
-            auto [fieldElem, arrSize] = unwrap_to_element(variable.getType());
+            auto [fieldElem, dims] = unwrap_to_element(variable.getType());
             FieldInfo field;
             field.name = std::string(variable.name);
             field.width = variable.getType().getBitstreamWidth();
             field.kind = field_kind(variable.getType());
             field.type_name = std::string(field_type_name(variable.getType()));
-            field.array_size = arrSize;
+            field.dims = dims;
             // Recursively extract nested struct types.
             if (fieldElem->kind == SymbolKind::PackedStructType) {
                 auto nested_name = std::string(field_type_name(variable.getType()));
@@ -288,10 +316,10 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
     // the full hierarchical path and the type alias name.  This lets the
     // generator emit exact, per-signal mappings.
     struct SignalTypeMapping {
-        std::string path;       // full hierarchical path, e.g. "top.dut.apb_req_o"
-        std::string type_name;  // type alias, e.g. "apb_req_t"
-        size_t width;           // total bit width
-        size_t array_size;      // >1 for packed arrays of structs
+        std::string path;               // full hierarchical path, e.g. "top.dut.apb_req_o"
+        std::string type_name;          // type alias, e.g. "apb_req_t"
+        size_t width;                   // total bit width
+        std::vector<size_t> dims;       // array dimensions (empty = scalar)
     };
     std::vector<SignalTypeMapping> signal_mappings;
     std::set<std::string> seen_paths;
@@ -311,7 +339,7 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
 
     auto collect_signal = [&](const Symbol& sym, const Type& type) {
         // Unwrap packed arrays to find the underlying packed struct.
-        auto [elem, arrSize] = unwrap_to_element(type);
+        auto [elem, dims] = unwrap_to_element(type);
         if (elem->kind != SymbolKind::PackedStructType)
             return;
 
@@ -343,7 +371,7 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
 
         auto path = strip_root(sym.getHierarchicalPath());
         if (seen_paths.insert(path).second) {
-            signal_mappings.push_back({path, tname, static_cast<size_t>(type.getBitstreamWidth()), arrSize});
+            signal_mappings.push_back({path, tname, static_cast<size_t>(type.getBitstreamWidth()), dims});
         }
     };
 
@@ -392,7 +420,7 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
                  << "\",\"width\":" << f.width
                  << ",\"kind\":\"" << f.kind
                  << "\",\"type_name\":\"" << json_escape(f.type_name)
-                 << "\",\"array_size\":" << f.array_size << "}";
+                 << "\",\"array_dims\":" << dims_to_json(f.dims) << "}";
         }
         json << "]}";
     }
@@ -417,7 +445,7 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
         json << "{\"path\":\"" << json_escape(m.path)
              << "\",\"type_name\":\"" << json_escape(m.type_name)
              << "\",\"width\":" << m.width
-             << ",\"array_size\":" << m.array_size << "}";
+             << ",\"array_dims\":" << dims_to_json(m.dims) << "}";
     }
     json << "]}";
 
