@@ -88,7 +88,9 @@ fn resolve_field_ref(
 /// A signal-to-struct mapping entry for TOML output.
 pub struct MappingEntry {
     pub pattern: String,
-    pub struct_type: String,
+    pub struct_type: Option<String>,
+    pub enum_type: Option<String>,
+    pub width: Option<u32>,
     pub array_dims: Vec<u32>,
 }
 
@@ -196,10 +198,26 @@ pub fn generate_toml(
         for m in mappings {
             out.push_str("[[mappings]]\n");
             out.push_str(&format!("pattern = \"{}\"\n", m.pattern));
-            out.push_str(&format!("struct_type = \"{}\"\n", m.struct_type));
+            if let Some(struct_type) = m.struct_type.as_ref() {
+                out.push_str(&format!("struct_type = \"{}\"\n", struct_type));
+            }
+            if let Some(enum_type) = m.enum_type.as_ref() {
+                out.push_str(&format!("enum_type = \"{}\"\n", enum_type));
+            }
+            if let Some(width) = m.width {
+                out.push_str(&format!("width = {width}\n"));
+            }
             let total_elems = total_elements(&m.array_dims);
-            if let Some(s) = struct_by_key.get(m.struct_type.as_str()) {
-                out.push_str(&format!("num_bits = {}\n", s.total_width * total_elems));
+            if let Some(struct_type) = m.struct_type.as_ref() {
+                if let Some(s) = struct_by_key.get(struct_type.as_str()) {
+                    out.push_str(&format!("num_bits = {}\n", s.total_width * total_elems));
+                }
+            } else if let Some(enum_type) = m.enum_type.as_ref() {
+                if let Some(e) = enum_by_key.get(enum_type.as_str()) {
+                    out.push_str(&format!("num_bits = {}\n", e.inner.width * total_elems));
+                }
+            } else if let Some(width) = m.width {
+                out.push_str(&format!("num_bits = {}\n", width * total_elems));
             }
             emit_dims(&mut out, &m.array_dims);
             out.push('\n');

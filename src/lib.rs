@@ -22,7 +22,7 @@ struct WaveHierarchyInfo {
 
 pub use surfer_translation_types::plugin_types::TranslateParams;
 
-use config::Config;
+use config::{Config, MappingRef};
 use generate::HierarchyHints;
 use meta_config::MetaConfig;
 
@@ -208,14 +208,25 @@ pub fn translates(variable: VariableMeta<(), ()>) -> FnResult<TranslationPrefere
 #[plugin_fn]
 pub fn variable_info(variable: VariableMeta<(), ()>) -> FnResult<VariableInfo> {
     let full_path = signal_full_path(&variable);
-    let info = with_config(|config| {
-        config
-            .find_mapping(&full_path, variable.num_bits)
-            .map(|(struct_name, array_dims)| {
-                decompose::build_variable_info(struct_name, array_dims, config)
-            })
-            .unwrap_or(VariableInfo::Bits)
-    })
+    let info = with_config(
+        |config| match config.find_mapping(&full_path, variable.num_bits) {
+            Some(MappingRef::Struct {
+                struct_name,
+                array_dims,
+            }) => decompose::build_variable_info(struct_name, array_dims, config),
+            Some(MappingRef::Enum {
+                enum_name,
+                array_dims,
+            }) => {
+                let width = config.enums.get(enum_name).map_or(0, |e| e.width);
+                decompose::build_leaf_variable_info(width, array_dims)
+            }
+            Some(MappingRef::Scalar { width, array_dims }) => {
+                decompose::build_leaf_variable_info(width, array_dims)
+            }
+            None => VariableInfo::Bits,
+        },
+    )
     .unwrap_or(VariableInfo::Bits);
     Ok(info)
 }
@@ -227,8 +238,7 @@ pub fn translate(
     let full_path = signal_full_path(&variable);
 
     let result = with_config(|config| {
-        let Some((struct_name, array_dims)) = config.find_mapping(&full_path, variable.num_bits)
-        else {
+        let Some(mapping) = config.find_mapping(&full_path, variable.num_bits) else {
             return TranslationResult {
                 val: ValueRepr::String("no mapping".to_string()),
                 subfields: vec![],
@@ -246,7 +256,19 @@ pub fn translate(
             VariableValue::String(v) => v.clone(),
         };
 
-        decompose::decompose(&binary_digits, struct_name, array_dims, config)
+        match mapping {
+            MappingRef::Struct {
+                struct_name,
+                array_dims,
+            } => decompose::decompose(&binary_digits, struct_name, array_dims, config),
+            MappingRef::Enum {
+                enum_name,
+                array_dims,
+            } => decompose::decompose_enum(&binary_digits, enum_name, array_dims, config),
+            MappingRef::Scalar { width, array_dims } => {
+                decompose::decompose_scalar(&binary_digits, width, array_dims)
+            }
+        }
     });
 
     Ok(result.unwrap_or_else(|| TranslationResult {

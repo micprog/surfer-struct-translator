@@ -13,6 +13,7 @@ pub struct ReflectedData {
 #[derive(Clone)]
 pub struct ReflectedSignalMapping {
     pub path: String,
+    pub kind: String,
     pub type_name: String,
     pub width: u32,
     /// Array dimensions (empty = scalar, [N] = 1D, [M,N] = 2D, etc.).
@@ -104,6 +105,8 @@ impl<'de> Deserialize<'de> for ReflectedField {
 #[derive(Deserialize)]
 struct ReflectedSignalMappingRaw {
     path: String,
+    #[serde(default)]
+    kind: Option<String>,
     type_name: String,
     width: u32,
     #[serde(default)]
@@ -116,6 +119,7 @@ impl From<ReflectedSignalMappingRaw> for ReflectedSignalMapping {
     fn from(raw: ReflectedSignalMappingRaw) -> Self {
         ReflectedSignalMapping {
             path: raw.path,
+            kind: raw.kind.unwrap_or_else(|| "struct".to_string()),
             type_name: raw.type_name,
             width: raw.width,
             array_dims: dims_from_raw(raw.array_dims, raw.array_size),

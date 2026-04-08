@@ -110,7 +110,7 @@ Place a `struct_defs.toml` directly in `.surfer/translators/`. No `struct_config
 
 ### Definitions file format
 
-The `struct_defs.toml` file contains enum definitions, struct definitions, and signal-to-struct mappings:
+The `struct_defs.toml` file contains enum definitions, struct definitions, and signal mappings:
 
 ```toml
 [enums.burst_t]
@@ -137,6 +137,12 @@ width = 1
 pattern = "TOP.dut.axi_req_o"
 struct_type = "req_t"
 num_bits = 112
+
+[[mappings]]
+pattern = "TOP.dut.insn_queue_cnt_q"
+width = 4
+array_size = 7
+num_bits = 28
 ```
 
 Fields are listed MSB-first (Verilator packing order). Each field can be a plain bit vector (`width`), a nested struct (`struct_type`), or an enum (`enum_type`). Array fields use `array_size` to specify the element count.

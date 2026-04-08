@@ -77,18 +77,40 @@ pub struct Mapping {
     /// Glob pattern matched against the full signal path (supports `*`).
     pub pattern: String,
     /// Name of the struct type to decompose into.
-    pub struct_type: String,
+    pub struct_type: Option<String>,
+    /// Name of the enum type for plain enum leaf signals.
+    pub enum_type: Option<String>,
+    /// Element width for plain scalar leaf signals.
+    pub width: Option<u32>,
     /// Optional: only match if the signal's bit width equals this value.
     pub num_bits: Option<u32>,
     /// Dimensions for array mappings (empty = not an array).
     pub array_dims: Vec<u32>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum MappingRef<'a> {
+    Struct {
+        struct_name: &'a str,
+        array_dims: &'a [u32],
+    },
+    Enum {
+        enum_name: &'a str,
+        array_dims: &'a [u32],
+    },
+    Scalar {
+        width: u32,
+        array_dims: &'a [u32],
+    },
+}
+
 /// Raw deserialization helper for Mapping.
 #[derive(Deserialize)]
 struct MappingRaw {
     pattern: String,
-    struct_type: String,
+    struct_type: Option<String>,
+    enum_type: Option<String>,
+    width: Option<u32>,
     num_bits: Option<u32>,
     #[serde(default)]
     array_size: Option<u32>,
@@ -102,6 +124,8 @@ impl From<MappingRaw> for Mapping {
         Mapping {
             pattern: raw.pattern,
             struct_type: raw.struct_type,
+            enum_type: raw.enum_type,
+            width: raw.width,
             num_bits: raw.num_bits,
             array_dims,
         }
@@ -162,18 +186,33 @@ impl Config {
             .unwrap_or(0)
     }
 
-    /// Find the struct type and array dims that match a given signal path and bit width.
-    pub fn find_mapping(&self, full_path: &str, num_bits: Option<u32>) -> Option<(&str, &[u32])> {
+    /// Find the mapping that matches a given signal path and bit width.
+    pub fn find_mapping(&self, full_path: &str, num_bits: Option<u32>) -> Option<MappingRef<'_>> {
         self.mappings.iter().find_map(|m| {
             if let Some(required) = m.num_bits
                 && num_bits != Some(required)
             {
                 return None;
             }
-            if glob_match(&m.pattern, full_path) {
-                Some((m.struct_type.as_str(), m.array_dims.as_slice()))
+            if !glob_match(&m.pattern, full_path) {
+                return None;
+            }
+
+            if let Some(struct_name) = m.struct_type.as_deref() {
+                Some(MappingRef::Struct {
+                    struct_name,
+                    array_dims: m.array_dims.as_slice(),
+                })
+            } else if let Some(enum_name) = m.enum_type.as_deref() {
+                Some(MappingRef::Enum {
+                    enum_name,
+                    array_dims: m.array_dims.as_slice(),
+                })
             } else {
-                None
+                m.width.map(|width| MappingRef::Scalar {
+                    width,
+                    array_dims: m.array_dims.as_slice(),
+                })
             }
         })
     }
@@ -271,10 +310,15 @@ num_bits = 7
         let config = Config::from_toml(toml).unwrap();
         assert_eq!(config.struct_total_width("chan_t"), 6); // 4 + 2
         assert_eq!(config.struct_total_width("req_t"), 7); // 6 + 1
-        assert_eq!(
-            config.find_mapping("TOP.dut.axi_req_o", Some(7)),
-            Some(("req_t", [].as_slice()))
-        );
+        let Some(MappingRef::Struct {
+            struct_name,
+            array_dims,
+        }) = config.find_mapping("TOP.dut.axi_req_o", Some(7))
+        else {
+            panic!("expected struct mapping");
+        };
+        assert_eq!(struct_name, "req_t");
+        assert!(array_dims.is_empty());
         assert_eq!(config.find_mapping("TOP.dut.axi_req_o", Some(8)), None);
     }
 
@@ -326,6 +370,25 @@ array_dims = [4, 5]
         assert_eq!(config.structs["outer_t"].fields[0].array_dims, vec![2, 3]);
         assert_eq!(config.mappings[0].array_dims, vec![4, 5]);
         assert_eq!(config.struct_total_width("outer_t"), 48); // 8 * 2 * 3
+    }
+
+    #[test]
+    fn test_config_parse_scalar_signal_mapping() {
+        let toml = r#"
+[[mappings]]
+pattern = "*.counts"
+width = 4
+array_size = 7
+num_bits = 28
+"#;
+        let config = Config::from_toml(toml).unwrap();
+        let Some(MappingRef::Scalar { width, array_dims }) =
+            config.find_mapping("TOP.dut.counts", Some(28))
+        else {
+            panic!("expected scalar mapping");
+        };
+        assert_eq!(width, 4);
+        assert_eq!(array_dims, [7]);
     }
 
     #[test]

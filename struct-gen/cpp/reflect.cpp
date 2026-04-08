@@ -85,7 +85,10 @@ private:
 // Dimensions are reported when:
 // - The innermost element is a struct or enum (array of structs/enums).
 // - There are 2+ nested PackedArrayType layers (multi-dimensional bit vector,
-//   e.g. logic [2:0][3:0]).
+//   e.g. logic [1:0][2:0][3:0]).
+// - A single PackedArrayType layer wraps a multi-bit scalar element
+//   (e.g. logic [2:0][1:0]), which is represented by slang as an array of
+//   2-bit scalar elements instead of nested packed-array nodes.
 //
 // A single PackedArrayType layer (e.g. logic [7:0]) is treated as a plain
 // bit vector with no dimensions.
@@ -105,6 +108,14 @@ static std::pair<const Type*, std::vector<size_t>> unwrap_to_element(const Type&
         // this is a multi-dimensional bit vector (e.g. logic [M:0][N:0]).
         // Report the outer dimensions; the innermost layer is the element width.
         if (arr.elementType.getCanonicalType().kind == SymbolKind::PackedArrayType) {
+            innerDims.insert(innerDims.begin(), static_cast<size_t>(arr.range.width()));
+            return {inner, innerDims};
+        }
+
+        // Slang can also represent logic [M:0][N:0] as a single packed-array
+        // layer whose element type is an N+1 bit scalar. Treat that as an
+        // array dimension, but keep plain logic [N:0] as a scalar bit vector.
+        if (arr.elementType.getBitstreamWidth() > 1) {
             innerDims.insert(innerDims.begin(), static_cast<size_t>(arr.range.width()));
             return {inner, innerDims};
         }
@@ -317,6 +328,7 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
     // generator emit exact, per-signal mappings.
     struct SignalTypeMapping {
         std::string path;               // full hierarchical path, e.g. "top.dut.apb_req_o"
+        std::string kind;               // "struct", "enum", or "scalar"
         std::string type_name;          // type alias, e.g. "apb_req_t"
         size_t width;                   // total bit width
         std::vector<size_t> dims;       // array dimensions (empty = scalar)
@@ -338,40 +350,49 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
     };
 
     auto collect_signal = [&](const Symbol& sym, const Type& type) {
-        // Unwrap packed arrays to find the underlying packed struct.
+        // Unwrap packed arrays to find the underlying element type.
         auto [elem, dims] = unwrap_to_element(type);
-        if (elem->kind != SymbolKind::PackedStructType)
+        auto kind = field_kind(type);
+
+        // Plain scalar / enum signals are only useful to show when they have
+        // array dimensions to expose.
+        if (kind != "struct" && dims.empty())
             return;
+
+        std::string tname;
 
         // Resolve the struct type alias name.
         // Prefer the name from canonical_to_alias (which matches the struct
         // definition name from the TypeAliasType pass) over field_type_name
         // (which may return a secondary alias like "apb_req_t" when the struct
         // was defined as "uart_apb_req_t").
-        std::string tname;
-        auto it = canonical_to_alias.find(elem);
-        if (it != canonical_to_alias.end()) {
-            tname = it->second;
-        } else {
-            tname = std::string(field_type_name(type));
-            if (tname.empty()) {
-                // Anonymous packed struct (inline `struct packed { ... } sig;`)
-                // — synthesize a name from the signal name so it can still be
-                // decomposed.  Register in canonical_to_alias so that other
-                // variables sharing the same anonymous type reuse this name.
-                tname = "__anon_" + std::string(sym.name);
-                canonical_to_alias.emplace(elem, tname);
+        if (kind == "struct") {
+            auto it = canonical_to_alias.find(elem);
+            if (it != canonical_to_alias.end()) {
+                tname = it->second;
+            } else {
+                tname = std::string(field_type_name(type));
+                if (tname.empty()) {
+                    // Anonymous packed struct (inline `struct packed { ... } sig;`)
+                    // — synthesize a name from the signal name so it can still be
+                    // decomposed.  Register in canonical_to_alias so that other
+                    // variables sharing the same anonymous type reuse this name.
+                    tname = "__anon_" + std::string(sym.name);
+                    canonical_to_alias.emplace(elem, tname);
+                }
             }
-        }
 
-        // Extract the struct definition from this elaborated signal's type.
-        // This gives us correctly-resolved field widths even when the
-        // TypeAliasType pass saw unresolved parameters.
-        extract_struct_from_elaborated(*elem, tname);
+            // Extract the struct definition from this elaborated signal's type.
+            // This gives us correctly-resolved field widths even when the
+            // TypeAliasType pass saw unresolved parameters.
+            extract_struct_from_elaborated(*elem, tname);
+        } else if (kind == "enum") {
+            tname = std::string(field_type_name(type));
+        }
 
         auto path = strip_root(sym.getHierarchicalPath());
         if (seen_paths.insert(path).second) {
-            signal_mappings.push_back({path, tname, static_cast<size_t>(type.getBitstreamWidth()), dims});
+            signal_mappings.push_back({path, kind, tname, static_cast<size_t>(type.getBitstreamWidth()), dims});
         }
     };
 
@@ -443,6 +464,7 @@ SlangResult reflect_types(const SlangSession& session, bool public_only, const r
         if (mi > 0) json << ",";
         const auto& m = signal_mappings[mi];
         json << "{\"path\":\"" << json_escape(m.path)
+             << "\",\"kind\":\"" << json_escape(m.kind)
              << "\",\"type_name\":\"" << json_escape(m.type_name)
              << "\",\"width\":" << m.width
              << ",\"array_dims\":" << dims_to_json(m.dims) << "}";

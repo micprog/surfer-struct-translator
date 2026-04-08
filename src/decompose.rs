@@ -12,15 +12,23 @@ pub fn build_variable_info(struct_name: &str, array_dims: &[u32], config: &Confi
     wrap_in_array_dims(elem_info, array_dims)
 }
 
+/// Build `VariableInfo` for a plain scalar or enum leaf signal with optional array wrapping.
+pub fn build_leaf_variable_info(width: u32, array_dims: &[u32]) -> VariableInfo {
+    let elem_info = if width == 1 {
+        VariableInfo::Bool
+    } else {
+        VariableInfo::Bits
+    };
+    wrap_in_array_dims(elem_info, array_dims)
+}
+
 /// Wrap a `VariableInfo` in nested array dimensions (leftmost = outermost).
 fn wrap_in_array_dims(inner: VariableInfo, dims: &[u32]) -> VariableInfo {
-    dims.iter().rev().fold(inner, |acc, &dim| {
-        VariableInfo::Compound {
-            subfields: (0..dim)
-                .map(|i| (format!("[{i}]"), acc.clone()))
-                .collect(),
-        }
-    })
+    dims.iter()
+        .rev()
+        .fold(inner, |acc, &dim| VariableInfo::Compound {
+            subfields: (0..dim).map(|i| (format!("[{i}]"), acc.clone())).collect(),
+        })
 }
 
 fn build_variable_info_for_struct(struct_def: &StructDef, config: &Config) -> VariableInfo {
@@ -68,6 +76,55 @@ pub fn decompose(
     } else {
         let elem_width = config.struct_total_width(struct_name) as usize;
         decompose_array(binary_digits, array_dims, elem_width, struct_def, config)
+    }
+}
+
+/// Decompose a plain scalar signal with optional array dimensions.
+pub fn decompose_scalar(binary_digits: &str, width: u32, array_dims: &[u32]) -> TranslationResult {
+    let empty_config = Config {
+        structs: std::collections::HashMap::new(),
+        enums: std::collections::HashMap::new(),
+        mappings: vec![],
+    };
+    let field = FieldDef {
+        name: String::new(),
+        width: Some(width),
+        struct_type: None,
+        enum_type: None,
+        array_dims: array_dims.to_vec(),
+    };
+    if array_dims.is_empty() {
+        decompose_leaf_element(binary_digits, &field, &empty_config)
+    } else {
+        decompose_leaf_array(
+            binary_digits,
+            array_dims,
+            width as usize,
+            &field,
+            &empty_config,
+        )
+    }
+}
+
+/// Decompose a plain enum signal with optional array dimensions.
+pub fn decompose_enum(
+    binary_digits: &str,
+    enum_name: &str,
+    array_dims: &[u32],
+    config: &Config,
+) -> TranslationResult {
+    let width = config.enums.get(enum_name).map_or(0, |e| e.width);
+    let field = FieldDef {
+        name: String::new(),
+        width: None,
+        struct_type: None,
+        enum_type: Some(enum_name.to_string()),
+        array_dims: array_dims.to_vec(),
+    };
+    if array_dims.is_empty() {
+        decompose_leaf_element(binary_digits, &field, config)
+    } else {
+        decompose_leaf_array(binary_digits, array_dims, width as usize, &field, config)
     }
 }
 
@@ -363,7 +420,9 @@ width = 1
         // [1][0].burst = FIXED
         let dim1 = &result.subfields[1].result;
         let e10_result = &dim1.subfields[0].result;
-        assert!(matches!(&e10_result.subfields[1].result.val, ValueRepr::String(s) if s == "FIXED"));
+        assert!(
+            matches!(&e10_result.subfields[1].result.val, ValueRepr::String(s) if s == "FIXED")
+        );
     }
 
     #[test]
@@ -553,15 +612,40 @@ array_dims = [2, 3]
         };
         assert_eq!(subfields[0].0, "data");
 
-        let VariableInfo::Compound { subfields: ref outer } = subfields[0].1 else {
+        let VariableInfo::Compound {
+            subfields: ref outer,
+        } = subfields[0].1
+        else {
             panic!("expected Compound");
         };
         assert_eq!(outer.len(), 2);
 
-        let VariableInfo::Compound { subfields: ref inner } = outer[0].1 else {
+        let VariableInfo::Compound {
+            subfields: ref inner,
+        } = outer[0].1
+        else {
             panic!("expected Compound");
         };
         assert_eq!(inner.len(), 3);
         assert!(matches!(inner[0].1, VariableInfo::Bits));
+    }
+
+    #[test]
+    fn test_variable_info_plain_scalar_array() {
+        let info = build_leaf_variable_info(4, &[3]);
+        let VariableInfo::Compound { subfields } = info else {
+            panic!("expected Compound");
+        };
+        assert_eq!(subfields.len(), 3);
+        assert!(matches!(subfields[0].1, VariableInfo::Bits));
+    }
+
+    #[test]
+    fn test_decompose_plain_scalar_array() {
+        let result = decompose_scalar("101000111111", 4, &[3]);
+        assert_eq!(result.subfields.len(), 3);
+        assert!(matches!(&result.subfields[0].result.val, ValueRepr::Bits(4, s) if s == "1010"));
+        assert!(matches!(&result.subfields[1].result.val, ValueRepr::Bits(4, s) if s == "0011"));
+        assert!(matches!(&result.subfields[2].result.val, ValueRepr::Bits(4, s) if s == "1111"));
     }
 }
